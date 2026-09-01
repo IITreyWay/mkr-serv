@@ -1,0 +1,12 @@
+{
+  "name": "mkr-oracle-server",
+  "version": "1.0.0",
+  "description": "Serveur de reception telemetry/commandes/exports SD pour MKR NB 1500",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.19.2"
+  }
+}

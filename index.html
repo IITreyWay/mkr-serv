@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MKR NB 1500 — Dashboard</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<style>
+  :root { color-scheme: dark; }
+  body { font-family: system-ui, sans-serif; background:#0f1117; color:#e8e8ee; margin:0; padding:20px; }
+  h1 { font-size:1.3rem; margin-bottom:4px; }
+  #statut { font-size:0.85rem; color:#8b93a7; margin-bottom:20px; }
+  .grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(140px,1fr)); gap:10px; margin-bottom:20px; }
+  .card { background:#1a1d27; border:1px solid #2a2f3d; border-radius:10px; padding:12px 14px; }
+  .card .label { font-size:0.75rem; color:#8b93a7; text-transform:uppercase; letter-spacing:.03em; }
+  .card .value { font-size:1.4rem; font-weight:600; margin-top:4px; }
+  .badge { display:inline-block; padding:2px 10px; border-radius:999px; font-size:0.8rem; font-weight:600; }
+  .ok { background:#153d24; color:#4ade80; }
+  .off { background:#3d1515; color:#f87171; }
+  canvas { background:#1a1d27; border:1px solid #2a2f3d; border-radius:10px; padding:10px; max-height:320px; }
+  .actions { display:flex; gap:8px; flex-wrap:wrap; margin:20px 0; }
+  button { background:#2563eb; color:white; border:none; padding:8px 16px; border-radius:8px; cursor:pointer; font-size:0.9rem; }
+  button:hover { background:#1d4ed8; }
+  button.danger { background:#dc2626; }
+  button.danger:hover { background:#b91c1c; }
+  #files { list-style:none; padding:0; }
+  #files li { padding:6px 0; border-bottom:1px solid #2a2f3d; display:flex; justify-content:space-between; }
+  #files a { color:#60a5fa; text-decoration:none; }
+  section { margin-bottom:28px; }
+  h2 { font-size:1rem; color:#c7cbd6; }
+</style>
+</head>
+<body>
+  <h1>⚡ MKR NB 1500 — Datalogger</h1>
+  <div id="statut">En attente de la première trame…</div>
+
+  <div class="grid" id="cards"></div>
+
+  <section>
+    <h2>Puissance (W)</h2>
+    <canvas id="chartPower" height="90"></canvas>
+  </section>
+
+  <section>
+    <h2>Commandes</h2>
+    <div class="actions">
+      <button onclick="envoyerCmd('START')">▶ Start</button>
+      <button onclick="envoyerCmd('STOP')" class="danger">⏹ Stop</button>
+      <button onclick="envoyerCmd('RESET')">↺ Reset énergie</button>
+      <button onclick="envoyerCmd('EXPORT')">💾 Exporter SD</button>
+      <button onclick="envoyerCmd('RECONNECT')">📶 Reconnecter réseau</button>
+    </div>
+    <div id="cmdStatut" style="font-size:0.85rem;color:#8b93a7;"></div>
+  </section>
+
+  <section>
+    <h2>Fichiers SD exportés</h2>
+    <ul id="files"></ul>
+  </section>
+
+<script>
+const chart = new Chart(document.getElementById('chartPower'), {
+  type: 'line',
+  data: { labels: [], datasets: [{ label: 'Puissance (W)', data: [], borderColor:'#60a5fa', backgroundColor:'rgba(96,165,250,0.15)', tension:0.25, fill:true, pointRadius:0 }] },
+  options: { responsive:true, scales:{ x:{ ticks:{ color:'#8b93a7' } }, y:{ ticks:{ color:'#8b93a7' } } }, plugins:{ legend:{ labels:{ color:'#c7cbd6' } } } }
+});
+
+function carte(label, value) {
+  return `<div class="card"><div class="label">${label}</div><div class="value">${value}</div></div>`;
+}
+
+async function refresh() {
+  try {
+    const r = await fetch('/api/latest');
+    const { latest, history } = await r.json();
+    if (!latest) return;
+
+    document.getElementById('statut').innerHTML =
+      `Dernière trame reçue le ${new Date(latest.receivedAt).toLocaleString('fr-FR')} — ` +
+      `<span class="badge ${latest.run ? 'ok':'off'}">${latest.run ? 'EN MARCHE':'ARRÊTÉ'}</span> ` +
+      `<span class="badge ${latest.mega ? 'ok':'off'}">Mega ${latest.mega ? 'OK':'?'}</span>`;
+
+    document.getElementById('cards').innerHTML = [
+      carte('Puissance', (latest.pwr ?? 0).toFixed(1) + ' W'),
+      carte('Énergie cumulée', (latest.nrg ?? 0).toFixed(3) + ' Wh'),
+      carte('Temp. 1/2/3', (latest.t||[]).map(v=>v.toFixed(1)).join(' / ') + ' °C'),
+      carte('Tension 1/2/3', (latest.v||[]).map(v=>v.toFixed(1)).join(' / ') + ' V'),
+      carte('Courant 1/2/3', (latest.a||[]).map(v=>v.toFixed(3)).join(' / ') + ' A'),
+      carte('État acquisition', latest.acq || '—'),
+    ].join('');
+
+    chart.data.labels = history.map(h => new Date(h.receivedAt).toLocaleTimeString('fr-FR'));
+    chart.data.datasets[0].data = history.map(h => h.pwr ?? 0);
+    chart.update('none');
+  } catch (e) { console.error(e); }
+}
+
+async function envoyerCmd(cmd) {
+  document.getElementById('cmdStatut').textContent = `Commande "${cmd}" mise en file, elle sera prise en compte au prochain cycle du MKR (~4s)…`;
+  await fetch('/api/queue', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ cmd }) });
+}
+
+async function refreshFiles() {
+  const r = await fetch('/files');
+  const list = await r.json();
+  document.getElementById('files').innerHTML = list.length
+    ? list.map(f => `<li>${f.name} <a href="${f.url}" download>télécharger</a></li>`).join('')
+    : '<li>Aucun export pour l\'instant.</li>';
+}
+
+refresh(); refreshFiles();
+setInterval(refresh, 4000);
+setInterval(refreshFiles, 15000);
+</script>
+</body>
+</html>
